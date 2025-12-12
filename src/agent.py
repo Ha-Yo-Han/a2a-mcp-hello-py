@@ -28,6 +28,10 @@ CITY_ALIASES = {
 }
 
 
+def _as_json_text(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, indent=2)
+
+
 def _maybe_json_load(x: Any) -> Any:
     """
     MCP 응답이 str(JSON 문자열)인 경우 dict/list로 파싱 시도합니다.
@@ -79,7 +83,13 @@ class WeatherMCPAgent:
     async def invoke(self, user_message: str) -> str:
         msg = (user_message or "").strip()
         if not msg:
-            return "도시명을 입력해 주세요. 예) 서울, 부산, 대구"
+            return _as_json_text(
+                {
+                    "ok": False,
+                    "type": "input",
+                    "error": "도시명을 입력해 주세요. 예) 서울, 부산, 대구",
+                }
+            )
 
         try:
             # 1) 지원 도시 목록
@@ -87,16 +97,24 @@ class WeatherMCPAgent:
                 res = await self.mcp_client.list_supported_cities()
                 res = _maybe_json_load(res)
 
-                # 예: {"supported_cities": ["서울", ...]} 형태면 깔끔하게 출력
+                # MCP가 dict로 주는 경우
                 if isinstance(res, dict) and "supported_cities" in res:
-                    cities = ", ".join(res["supported_cities"])
-                    return f"지원 도시: {cities}"
+                    return _as_json_text(
+                        {
+                            "ok": True,
+                            "type": "supported_cities",
+                            "supported_cities": res["supported_cities"],
+                        }
+                    )
 
-                # 그 외에는 JSON 문자열로 반환
-                return (
-                    json.dumps(res, ensure_ascii=False, indent=2)
-                    if not isinstance(res, str)
-                    else res
+                # 그 외(문자열/다른 구조)는 raw로 감싸기
+                return _as_json_text(
+                    {
+                        "ok": True,
+                        "type": "supported_cities",
+                        "supported_cities": SUPPORTED_CITIES,
+                        "raw": res,
+                    }
                 )
 
             # 2) 현재 실황 조회
@@ -104,16 +122,33 @@ class WeatherMCPAgent:
             res = await self.mcp_client.get_now_weather(city)
             res = _maybe_json_load(res)
 
-            # MCP 서버가 {"ok": false, "error": "..."} 같은 형태로 주는 경우
+            # 서버가 {"ok": false, "error": "..."} 형태로 주는 경우
             if isinstance(res, dict) and res.get("ok") is False:
-                return f"조회 실패: {res.get('error', '알 수 없는 오류')}"
+                return _as_json_text(
+                    {
+                        "ok": False,
+                        "type": "nowcast",
+                        "city": city,
+                        "error": res.get("error", "알 수 없는 오류"),
+                        "raw": res,
+                    }
+                )
 
-            return (
-                json.dumps(res, ensure_ascii=False, indent=2)
-                if not isinstance(res, str)
-                else res
+            return _as_json_text(
+                {
+                    "ok": True,
+                    "type": "nowcast",
+                    "city": city,
+                    "data": res,
+                }
             )
 
         except Exception as e:
-            # A2A에서 무응답처럼 보이지 않게, 항상 문자열로 반환
-            return f"에이전트 오류(Exception): {e}"
+            # A2A에서 무응답처럼 보이지 않게, 항상 JSON 문자열로 반환
+            return _as_json_text(
+                {
+                    "ok": False,
+                    "type": "exception",
+                    "error": f"{e}",
+                }
+            )

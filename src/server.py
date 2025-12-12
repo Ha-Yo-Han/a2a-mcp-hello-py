@@ -52,7 +52,7 @@ def create_agent_card(host: str, port: int) -> AgentCard:
 def main():
     """Main entry point."""
     host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", 9999))
+    port = int(os.environ.get("PORT", 8080))
 
     agent_card = create_agent_card(host, port)
 
