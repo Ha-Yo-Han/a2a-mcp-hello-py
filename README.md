@@ -58,35 +58,62 @@ python3 src/server.py
 curl http://localhost:9999/.well-known/agent.json
 ```
 
-## 테스트
+## 테스트 (Postman)
 
-### A2A Inspector 사용
+### Headers 설정 (모든 요청에 필수)
 
-1. [A2A Inspector](https://github.com/a2aproject/a2a-inspector) 설치
-2. Agent URL 입력: `http://localhost:9999/`
-3. 메시지 전송: "김철수에게 인사해줘"
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `Accept` | `application/json, text/event-stream` |
 
-### curl로 테스트
+### 1. Agent Card 확인
 
-```bash
-# Agent Card 확인
-curl http://localhost:9999/.well-known/agent.json
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/.well-known/agent.json`
 
-# 메시지 전송
-curl -X POST http://localhost:9999/tasks/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "tasks/send",
-    "params": {
-      "message": {
-        "role": "user",
-        "parts": [{"type": "text", "text": "김철수에게 인사해줘"}]
-      }
+### 2. 메시지 전송
+
+- **Method**: `POST`
+- **URL**: `http://localhost:9999/`
+- **Body** (raw JSON):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [{"kind": "text", "text": "김철수에게 인사해줘"}],
+      "messageId": "msg-001"
     }
-  }'
+  }
+}
 ```
+
+### 3. 여러 명에게 인사
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "2",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [{"kind": "text", "text": "김철수, 이영희, 박민수에게 인사해줘"}],
+      "messageId": "msg-002"
+    }
+  }
+}
+```
+
+### Cloud Run 배포 시
+
+URL만 변경하여 동일하게 테스트:
+- `https://a2a-mcp-hello-py-xxxxxx.asia-northeast3.run.app/`
 
 ## 아키텍처
 
