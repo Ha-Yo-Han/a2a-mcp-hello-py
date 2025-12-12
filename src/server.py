@@ -14,11 +14,8 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill  # type: ignore
 
 from agent_executor import KMANowcastMCPAgentExecutor  # type: ignore
 
-# MCP 서버(요한님이 Cloud Run에 올린 FastMCP 서버) 엔드포인트
-MCP_SERVER_URL = os.environ.get(
-    "MCP_SERVER_URL",
-    "https://mcp-hello-py-1056645265236.asia-northeast3.run.app/mcp",
-)
+# MCP 서버(Cloud Run에 올린 FastMCP 서버) 엔드포인트
+MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "")
 
 # A2A 서버(이 에이전트 자체)의 외부 URL(Cloud Run 환경이면 보통 이 값이 주어짐)
 SERVICE_URL = os.environ.get("SERVICE_URL", "")
@@ -38,10 +35,7 @@ def create_agent_card(host: str, port: int) -> AgentCard:
         ],
     )
 
-    if SERVICE_URL:
-        agent_url = SERVICE_URL
-    else:
-        agent_url = f"http://{host}:{port}/"
+    agent_url = SERVICE_URL or f"http://{host}:{port}/"
 
     return AgentCard(
         name="KMA Nowcast MCP Agent",
@@ -76,7 +70,7 @@ def main():
     print(f"MCP Server URL: {MCP_SERVER_URL}")
     print(f"Service URL: {SERVICE_URL or f'http://{host}:{port}/'}")
 
-    uvicorn.run(server.build(), host=host, port=port)
+    uvicorn.run(server.build(), host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
