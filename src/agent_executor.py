@@ -1,133 +1,78 @@
-import json
 import re
-from typing import Any, Dict, Optional
 
-import httpx
+from a2a.server.agent_execution import (  # type: ignore
+    AgentExecutor,
+    EventQueue,
+    RequestContext,
+)
+from a2a.utils import new_agent_text_message  # type: ignore
+from a2a.utils.parts import get_text_parts  # type: ignore
 
-CITY_CANDIDATES = [
-    "서울",
-    "부산",
-    "대구",
-    "인천",
-    "광주",
-    "대전",
-    "울산",
-    "세종",
-]
+from agent import WeatherMCPAgent  # type: ignore
+
+CITY_CANDIDATES = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종"]
 
 
-def _extract_city(text: str) -> Optional[str]:
+def _extract_city(text: str) -> str:
     s = (text or "").strip()
     for c in CITY_CANDIDATES:
         if c in s:
             return c
-    return None
+    return "서울"
 
 
-def _tool_result_to_text(tool_result: Any) -> str:
+def _wants_city_list(text: str) -> bool:
+    s = (text or "").strip()
+    return bool(
+        re.search(r"(지원\s*도시|도시\s*목록|지원\s*목록|목록\s*보여|리스트)", s)
+    )
+
+
+def _get_user_text(context: RequestContext) -> str:
     """
-    FastMCP(json_response=True)에서 tools/call의 result는 보통 다음 형태입니다.
-    {
-      "content":[{"type":"text","text":"{...JSON 문자열...}"}],
-      "isError": false
-    }
+    RequestContext(RequestContext)에서 유저 텍스트(TextPart)를 최대한 안전하게 추출합니다.
+    SDK 버전에 따라 context.message 또는 context.request.message에 들어있을 수 있어 방어합니다.
     """
-    if isinstance(tool_result, dict):
-        # 1) content[0].text 우선
-        content = tool_result.get("content")
-        if isinstance(content, list) and content:
-            first = content[0]
-            if (
-                isinstance(first, dict)
-                and first.get("type") == "text"
-                and "text" in first
-            ):
-                return str(first["text"])
+    # 1) context.message가 있는 경우
+    msg = getattr(context, "message", None)
+    if msg is not None and getattr(msg, "parts", None):
+        parts = get_text_parts(msg.parts)
+        return " ".join(parts).strip()
 
-        # 2) result 자체를 보기 좋게
-        try:
-            return json.dumps(tool_result, ensure_ascii=False, indent=2)
-        except Exception:
-            return str(tool_result)
+    # 2) context.request.message가 있는 경우
+    req = getattr(context, "request", None)
+    if req is not None and getattr(req, "message", None) is not None:
+        parts = get_text_parts(req.message.parts)
+        return " ".join(parts).strip()
 
-    return str(tool_result)
+    return ""
 
 
-class KMANowcastMCPAgentExecutor:
+class KMANowcastMCPAgentExecutor(AgentExecutor):
     def __init__(self, mcp_url: str):
-        self._mcp_url = (mcp_url or "").strip().rstrip("/")
-        self._id = 0
+        self.agent = WeatherMCPAgent(mcp_url)
 
-    def _next_id(self) -> int:
-        self._id += 1
-        return self._id
-
-    def _mcp_call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self._next_id(),
-            "method": method,
-            "params": params,
-        }
-
-        try:
-            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
-                r = client.post(
-                    self._mcp_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                    },
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        user_text = _get_user_text(context)
+        if not user_text:
+            reply = "도시명을 입력해 주세요. 예) 서울 지금 실황"
+            await event_queue.enqueue_event(
+                new_agent_text_message(
+                    reply, context_id=context.context_id, task_id=context.task_id
                 )
-                r.raise_for_status()
-                return r.json()
+            )
+            return
 
-        except httpx.TimeoutException:
-            return {"error": {"message": "MCP 호출 타임아웃(timeout)"}}
+        # (선택) 여기서 분기하고 싶으면 분기 가능
+        # - 다만 WeatherMCPAgent.invoke() 안에서 이미 분기한다면 그냥 넘겨도 됩니다.
+        reply = await self.agent.invoke(user_text)
 
-        except httpx.HTTPStatusError as e:
-            return {
-                "error": {
-                    "message": f"HTTP {e.response.status_code}: {e.response.text}"
-                }
-            }
-
-        except httpx.RequestError as e:
-            return {"error": {"message": f"RequestError: {e}"}}
-
-        except Exception as e:
-            return {"error": {"message": f"UnexpectedError: {e}"}}
-
-    def _call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        return self._mcp_call(
-            "tools/call",
-            {"name": tool_name, "arguments": arguments},
+        await event_queue.enqueue_event(
+            new_agent_text_message(
+                reply, context_id=context.context_id, task_id=context.task_id
+            )
         )
 
-    def execute(self, text: str) -> str:
-        """
-        입력 텍스트를 보고:
-        - '목록/지원/도시' 류면 list_supported_cities 호출
-        - 그 외에는 문장에서 도시명을 찾아 get_now_weather 호출
-        """
-        t = (text or "").strip()
-
-        # 0) MCP 호출 자체가 깨진 경우
-        def _handle_rpc(res: Dict[str, Any]) -> str:
-            if isinstance(res, dict) and "error" in res and res["error"]:
-                return f"오류: {res['error'].get('message', res['error'])}"
-
-            # JSON-RPC 응답은 보통 {"result": {...}} 형태
-            result = res.get("result", res)
-            return _tool_result_to_text(result)
-
-        # 1) 지원 도시 목록
-        if re.search(r"(지원|목록|도시\s*목록)", t):
-            res = self._call_tool("list_supported_cities", {})
-            return _handle_rpc(res)
-
-        # 2) 도시 날씨 실황
-        city = _extract_city(t) or "서울"
-        res = self._call_tool("get_now_weather", {"city": city})
-        return _handle_rpc(res)
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        # 단순 에이전트면 cancel 미지원으로 처리해도 됩니다.
+        raise Exception("cancel not supported")
