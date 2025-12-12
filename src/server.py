@@ -17,7 +17,7 @@ from agent_executor import KMANowcastMCPAgentExecutor  # type: ignore
 # MCP 서버(요한님이 Cloud Run에 올린 FastMCP 서버) 엔드포인트
 MCP_SERVER_URL = os.environ.get(
     "MCP_SERVER_URL",
-    "https://mcp-hello-py-666155174404.asia-northeast3.run.app/mcp",
+    "https://mcp-hello-py-1056645265236.asia-northeast3.run.app/mcp",
 )
 
 # A2A 서버(이 에이전트 자체)의 외부 URL(Cloud Run 환경이면 보통 이 값이 주어짐)
