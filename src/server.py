@@ -1,6 +1,7 @@
-"""A2A Server for Hello MCP Agent."""
+"""A2A Server for KMA Nowcast MCP Agent."""
 
 import os
+
 import uvicorn  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 
@@ -11,28 +12,29 @@ from a2a.server.request_handlers import DefaultRequestHandler  # type: ignore
 from a2a.server.tasks import InMemoryTaskStore  # type: ignore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill  # type: ignore
 
-from agent_executor import HelloMCPAgentExecutor  # type: ignore
+from agent_executor import KMANowcastMCPAgentExecutor  # type: ignore
 
-
+# MCP 서버(요한님이 Cloud Run에 올린 FastMCP 서버) 엔드포인트
 MCP_SERVER_URL = os.environ.get(
     "MCP_SERVER_URL",
-    "https://mcp-hello-py-666155174404.asia-northeast3.run.app/mcp"
+    "https://mcp-hello-py-666155174404.asia-northeast3.run.app/mcp",
 )
 
+# A2A 서버(이 에이전트 자체)의 외부 URL(Cloud Run 환경이면 보통 이 값이 주어짐)
 SERVICE_URL = os.environ.get("SERVICE_URL", "")
 
 
 def create_agent_card(host: str, port: int) -> AgentCard:
     """Create the A2A Agent Card."""
     skill = AgentSkill(
-        id="korean_greeting",
-        name="Korean Greeting",
-        description="이름을 받아 한국어로 인사합니다. MCP Hello Server를 사용합니다.",
-        tags=["greeting", "korean", "mcp"],
+        id="kma_nowcast",
+        name="KMA Nowcast",
+        description="광역시명을 받아 기상청 초단기실황을 조회해 사람이 읽기 좋은 JSON으로 제공합니다. MCP 서버를 사용합니다.",
+        tags=["weather", "kma", "nowcast", "mcp", "korea"],
         examples=[
-            "김철수에게 인사해줘",
-            "이영희, 박민수에게 인사해줘",
-            "안녕하세요",
+            "서울 지금 날씨 실황 알려줘",
+            "부산 실황 보여줘",
+            "지원 도시 목록 알려줘",
         ],
     )
 
@@ -42,8 +44,8 @@ def create_agent_card(host: str, port: int) -> AgentCard:
         agent_url = f"http://{host}:{port}/"
 
     return AgentCard(
-        name="Hello MCP Agent",
-        description="MCP Hello Server를 사용하여 한국어로 인사하는 A2A 에이전트입니다.",
+        name="KMA Nowcast MCP Agent",
+        description="MCP Weather Server를 사용하여 기상청 초단기실황을 조회하고 요약/정리해주는 A2A 에이전트입니다.",
         url=agent_url,
         version="1.0.0",
         default_input_modes=["text"],
@@ -61,7 +63,7 @@ def main():
     agent_card = create_agent_card(host, port)
 
     request_handler = DefaultRequestHandler(
-        agent_executor=HelloMCPAgentExecutor(MCP_SERVER_URL),
+        agent_executor=KMANowcastMCPAgentExecutor(MCP_SERVER_URL),
         task_store=InMemoryTaskStore(),
     )
 
@@ -70,7 +72,7 @@ def main():
         http_handler=request_handler,
     )
 
-    print(f"Starting A2A Hello MCP Agent on {host}:{port}")
+    print(f"Starting A2A KMA Nowcast MCP Agent on {host}:{port}")
     print(f"MCP Server URL: {MCP_SERVER_URL}")
     print(f"Service URL: {SERVICE_URL or f'http://{host}:{port}/'}")
 

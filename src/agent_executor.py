@@ -1,78 +1,74 @@
-"""A2A Agent Executor for Hello MCP Agent."""
+import re
+from typing import Any, Dict, Optional
 
-from a2a.server.agent_execution import AgentExecutor, RequestContext  # type: ignore
-from a2a.server.events import EventQueue  # type: ignore
-from a2a.server.tasks import TaskUpdater  # type: ignore
-from a2a.types import Part, TaskState, TextPart  # type: ignore
-from a2a.utils import new_agent_text_message, new_task  # type: ignore
-from agent import HelloMCPAgent  # type: ignore
+import httpx
+
+CITY_CANDIDATES = [
+    "서울",
+    "부산",
+    "대구",
+    "인천",
+    "광주",
+    "대전",
+    "울산",
+    "세종",
+]
 
 
-class HelloMCPAgentExecutor(AgentExecutor):
-    """A2A Agent Executor that uses MCP Hello Server."""
+def _extract_city(text: str) -> Optional[str]:
+    s = (text or "").strip()
+    for c in CITY_CANDIDATES:
+        if c in s:
+            return c
+    return None
 
+
+class KMANowcastMCPAgentExecutor:
     def __init__(self, mcp_url: str):
-        self.agent = HelloMCPAgent(mcp_url)
+        self._mcp_url = mcp_url
 
-    async def execute(
-        self,
-        context: RequestContext,
-        event_queue: EventQueue,
-    ) -> None:
-        """Execute the agent with user input."""
-        user_message = context.get_user_input() if hasattr(context, 'get_user_input') else ""
-        
-        if not user_message and context.message and context.message.parts:
-            for part in context.message.parts:
-                if hasattr(part, 'text'):
-                    user_message = part.text
-                    break
-                elif hasattr(part, 'root') and hasattr(part.root, 'text'):
-                    user_message = part.root.text
-                    break
+    def _mcp_call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }
 
-        if not user_message:
-            user_message = "친구"
-
-        task = context.current_task or new_task(context.message)
-        await event_queue.enqueue_event(task)
-
-        updater = TaskUpdater(event_queue, task.id, task.context_id)
-
-        try:
-            await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(
-                    "MCP 서버에 인사 요청 중...",
-                    task.context_id,
-                    task.id
-                ),
+        with httpx.Client(timeout=15.0) as client:
+            r = client.post(
+                self._mcp_url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
             )
+            r.raise_for_status()
+            return r.json()
 
-            result = await self.agent.invoke(user_message)
+    def _call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        return self._mcp_call(
+            "tools/call",
+            {"name": tool_name, "arguments": arguments},
+        )
 
-            await updater.add_artifact(
-                [Part(root=TextPart(text=result))],
-                name="greeting",
-            )
+    # ↓↓↓ 여기 메서드 이름/시그니처는 요한님 템플릿에 맞춰 조정하세요.
+    # 템플릿이 "execute(text: str) -> str" 형태면 그대로 쓰시면 됩니다.
+    def execute(self, text: str) -> str:
+        """
+        입력 텍스트를 보고:
+        - '목록/지원/도시' 류면 list_supported_cities 호출
+        - 그 외에는 문장에서 도시명을 찾아 get_now_weather 호출
+        """
+        t = (text or "").strip()
 
-            await updater.complete()
+        # 1) 지원 도시 목록
+        if re.search(r"(지원|목록|도시\s*목록)", t):
+            res = self._call_tool("list_supported_cities", {})
+            return str(res.get("result", res))
 
-        except Exception as e:
-            await updater.update_status(
-                TaskState.failed,
-                new_agent_text_message(
-                    f"오류 발생: {str(e)}",
-                    task.context_id,
-                    task.id
-                ),
-                final=True,
-            )
-
-    async def cancel(
-        self,
-        context: RequestContext,
-        event_queue: EventQueue,
-    ) -> None:
-        """Cancel is not supported."""
-        raise Exception("cancel not supported")
+        # 2) 도시 날씨 실황
+        city = _extract_city(t) or "서울"
+        res = self._call_tool("get_now_weather", {"city": city})
+        return str(res.get("result", res))
